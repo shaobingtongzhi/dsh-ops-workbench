@@ -562,7 +562,7 @@ window.__ModuleLoader__.load({
           })),
         ),
         h('div', { className: 'ow-note', style: { marginTop: 14 } },
-          '巡检只读：跑一段 shell 采数据，不改配置、不重启服务。想改机器请自己去终端 —— 第一版故意不给你「一键执行」，避免手滑。'),
+          '巡检只读：跑一段 shell 采数据，不改配置、不重启服务。'),
       )
     }
 

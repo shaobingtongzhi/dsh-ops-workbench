@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Server ops workbench",
+    "description": "A single panel for the daily server questions: how are the machines doing, where to look first when something breaks, and what to check each day. Read-only SSH collection of CPU, memory, disk, load and network plus failed units, listening ports and error logs, scored into findings with a reason and a suggested next step, and a daily ops report.",
+    "detail": "README.md"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "name": "dsh-ops-workbench",
+  "version": "1.0.0",
+  "description": "Server ops workbench for DeepSeek Harness: read-only SSH health checks, triage playbooks, and a daily ops report.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shaobingtongzhi/dsh-ops-workbench.git"
+  },
+  "homepage": "https://github.com/shaobingtongzhi/dsh-ops-workbench#readme",
+  "bugs": {
+    "url": "https://github.com/shaobingtongzhi/dsh-ops-workbench/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "ops",
+    "server",
+    "ssh",
+    "monitoring"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}

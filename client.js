@@ -89,8 +89,19 @@ window.__ModuleLoader__.load({
       .ow-issue .ow-fix { color:inherit; opacity:.92; }
       .ow-issue-head { display:flex; align-items:center; gap:6px; }
       .ow-issue-head .ow-spacer { min-width:8px; }
-      .ow-spark { display:flex; align-items:flex-end; gap:2px; height:54px; margin-top:8px; }
-      .ow-spark i { flex:1 1 0; min-width:2px; border-radius:2px 2px 0 0; opacity:.88; }
+      .ow-trend-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 8px; }
+      .ow-chart { display:grid; grid-template-columns:44px 1fr; gap:6px; }
+      .ow-chart-y { display:flex; flex-direction:column; justify-content:space-between; height:132px; font-size:10.5px; line-height:1; text-align:right; opacity:.62; font-variant-numeric:tabular-nums; }
+      .ow-chart-main { min-width:0; }
+      .ow-chart-plot { position:relative; cursor:pointer; }
+      .ow-plot-dot { position:absolute; width:8px; height:8px; margin:-4px 0 0 -4px; border-radius:50%; border:1.5px solid rgba(255,255,255,.92); box-sizing:border-box; pointer-events:none; box-shadow:0 0 0 1px rgba(0,0,0,.14); }
+      .ow-plot-dot--last { width:5px; height:5px; margin:-2.5px 0 0 -2.5px; border-width:1px; }
+      .ow-cross { position:absolute; top:0; bottom:0; width:1px; background:currentColor; opacity:.26; pointer-events:none; }
+      .ow-chart-svg { width:100%; height:120px; display:block; overflow:visible; }
+      .ow-chart-x { position:relative; height:15px; margin-top:3px; font-size:10.5px; opacity:.62; font-variant-numeric:tabular-nums; }
+      .ow-chart-x span { position:absolute; top:0; white-space:nowrap; }
+      .ow-tip { position:absolute; z-index:3; transform:translate(-50%,-118%); background:rgba(24,26,30,.94); color:#fff; font-size:11px; line-height:1.5; padding:3px 7px; border-radius:5px; white-space:nowrap; pointer-events:none; box-shadow:0 2px 8px rgba(0,0,0,.25); }
+      .ow-tip b { font-weight:600; }
       .ow-table { width:100%; border-collapse:collapse; font-size:12px; }
       .ow-table th { text-align:left; font-weight:600; color:var(--ow-mute); font-size:11px; padding:6px 8px; border-bottom:1px solid var(--ow-line); white-space:nowrap; }
       .ow-table td { padding:6px 8px; border-bottom:1px solid var(--ow-line-soft); vertical-align:middle; }
@@ -287,6 +298,14 @@ window.__ModuleLoader__.load({
       const d = new Date(ts)
       const pad = (n) => String(n).padStart(2, '0')
       return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    }
+
+    // 只到分钟，x 轴刻度和气泡都用它
+    const fmtHm = (ts) => {
+      if (!ts) return '-'
+      const d = new Date(ts)
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}`
     }
 
     const fmtUptime = (sec) => {
@@ -683,6 +702,197 @@ window.__ModuleLoader__.load({
 
     /* -------------------------------------------------------------- 巡检 */
 
+    /* ---------------------------------------------------------- 走势曲线 */
+    // 取最近多少次巡检；页面「最近走势」用它，后端最多保留 480 次
+    const TREND_POINTS = 24
+    const TREND_W = 240
+    const TREND_H = 120
+    const TREND_PAD = 5
+    const TREND_SPAN = TREND_H - TREND_PAD * 2
+    // 自适应纵轴的最小跨度（百分点）。真实内存波动只有 0.1–2.6pp，
+    // 全按 0–100% 画就是一条死直线；但也不能把 0.1pp 的抖动放大成过山车，所以兜 6pp 底。
+    const TREND_MIN_SPAN = 6
+
+    function trendAvails(points) {
+      return (points ?? [])
+        .filter((point) => point && Number.isFinite(point.at))
+        .map((point) => (Number.isFinite(point.memAvailPct) ? point.memAvailPct : 100))
+    }
+
+    // 纵轴范围：数据落在这个区间里，两端各留一点余量；同时夹在 0–100 之内
+    function trendDomain(points) {
+      const avails = trendAvails(points)
+      if (avails.length === 0) return { d0: 0, d1: 100 }
+      const low = Math.min(...avails)
+      const high = Math.max(...avails)
+      const span = Math.max(high - low + Math.max(2, (high - low) * 0.3), TREND_MIN_SPAN)
+      const mid = (low + high) / 2
+      let d0 = mid - span / 2
+      let d1 = mid + span / 2
+      if (d0 < 0) { d1 -= d0; d0 = 0 }
+      if (d1 > 100) { d0 -= d1 - 100; d1 = 100 }
+      return { d0: Math.max(0, d0), d1: Math.min(100, d1) }
+    }
+
+    // Catmull-Rom 转三次贝塞尔：每个采样点只受左右邻居影响，画出来是一条平滑曲线，
+    // 既不抖成折线，也不会像样条那样在两点之间乱冲（控制点一律夹在框内）。
+    function smoothPath(points) {
+      if (!points || points.length === 0) return ''
+      const first = points[0]
+      if (points.length === 1) return `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`
+      const clampY = (value) => Math.max(TREND_PAD, Math.min(TREND_H - TREND_PAD, value))
+      const tension = 0.2
+      let d = `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const p0 = points[i - 1] ?? points[i]
+        const p1 = points[i]
+        const p2 = points[i + 1]
+        const p3 = points[i + 2] ?? p2
+        const c1x = p1.x + (p2.x - p0.x) * tension
+        const c1y = clampY(p1.y + (p2.y - p0.y) * tension)
+        const c2x = p2.x - (p3.x - p1.x) * tension
+        const c2y = clampY(p2.y - (p3.y - p1.y) * tension)
+        d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`
+      }
+      return d
+    }
+
+    // 采样点 → 画布坐标：纵轴画「内存可用%」，越高越松快
+    function trendPoints(points, domain) {
+      const usable = (points ?? []).filter((point) => point && Number.isFinite(point.at))
+      const range = domain ?? trendDomain(usable)
+      const span = Math.max(0.0001, range.d1 - range.d0)
+      return usable.map((point, index) => {
+        const avail = Number.isFinite(point.memAvailPct) ? point.memAvailPct : 100
+        const used = Math.max(0, Math.min(100, 100 - avail))
+        const x = usable.length === 1 ? TREND_W : (index / (usable.length - 1)) * TREND_W
+        const ratio = Math.max(0, Math.min(1, (avail - range.d0) / span))
+        const y = TREND_PAD + TREND_SPAN * (1 - ratio)
+        return { x, y, at: point.at, avail, used }
+      })
+    }
+
+    // x 轴刻度下标：按点数均匀挑，默认 6 个；点太少就少给几个，避免标签互相压字
+    const X_TICKS = 6
+    function xTickIndexes(count, want = X_TICKS) {
+      if (!Number.isFinite(count) || count <= 0) return []
+      if (count === 1) return [0]
+      const ticks = Math.max(2, Math.min(want, count))
+      const out = []
+      for (let i = 0; i < ticks; i += 1) out.push(Math.round((i * (count - 1)) / (ticks - 1)))
+      return Array.from(new Set(out))
+    }
+
+    // 鼠标横向位置（0–1）落在第几个采样点上
+    function hoverIndexAt(ratio, count) {
+      if (!Number.isFinite(ratio) || count <= 0) return 0
+      const clamped = Math.max(0, Math.min(1, ratio))
+      return Math.round(clamped * (count - 1))
+    }
+
+    function TrendChart({ points, rules, hostName }) {
+      const [hover, setHover] = useState(null)
+      const domain = trendDomain(points)
+      const pts = trendPoints(points, domain)
+      const availWarn = rules.memAvailPct?.warn ?? 15
+      const availCrit = rules.memAvailPct?.crit ?? 8
+      const worst = pts.reduce((min, point) => Math.min(min, point.avail), 100)
+      const color = worst <= availCrit ? LEVEL.crit.color : worst <= availWarn ? LEVEL.warn.color : LEVEL.ok.color
+      const last = pts[pts.length - 1]
+      const line = smoothPath(pts)
+      const area = pts.length > 1 ? `${line} L ${TREND_W} ${TREND_H} L 0 ${TREND_H} Z` : ''
+      const span = Math.max(0.0001, domain.d1 - domain.d0)
+      const warnInside = availWarn >= domain.d0 && availWarn <= domain.d1
+      const warnY = TREND_PAD + TREND_SPAN * (1 - (availWarn - domain.d0) / span)
+      const ticks = [domain.d1, (domain.d1 + domain.d0) / 2, domain.d0]
+      const xTicks = xTickIndexes(pts.length).map((index) => ({ index, at: pts[index].at, x: pts[index].x }))
+
+      const onMove = (event) => {
+        if (pts.length === 0) return
+        const box = event?.currentTarget?.getBoundingClientRect?.()
+        if (!box || !box.width) return
+        setHover(hoverIndexAt((event.clientX - box.left) / box.width, pts.length))
+      }
+      const onLeave = () => setHover(null)
+      const hovered = hover != null && pts[hover] ? pts[hover] : null
+      const hoverLeft = hovered ? Math.min(94, Math.max(6, (hovered.x / TREND_W) * 100)) : 0
+
+      return h('div', { className: 'ow-chart' },
+        h('div', { className: 'ow-chart-y' }, ticks.map((value, index) => h('span', { key: index }, `${value.toFixed(1)}%`))),
+        h('div', { className: 'ow-chart-main' },
+          h('div', { className: 'ow-chart-plot', onMouseMove: onMove, onMouseLeave: onLeave },
+            h('svg', {
+              className: 'ow-chart-svg',
+              viewBox: `0 0 ${TREND_W} ${TREND_H}`,
+              preserveAspectRatio: 'none',
+              role: 'img',
+              'aria-label': `${hostName ?? ''} 内存可用走势，纵向 ${domain.d0.toFixed(1)}% 到 ${domain.d1.toFixed(1)}%`,
+            },
+              ticks.map((value, index) => h('line', {
+                key: `grid${index}`,
+                x1: 0, y1: (TREND_PAD + TREND_SPAN * (index / 2)).toFixed(2),
+                x2: TREND_W, y2: (TREND_PAD + TREND_SPAN * (index / 2)).toFixed(2),
+                stroke: 'currentColor', strokeWidth: 1, opacity: 0.12,
+                vectorEffect: 'non-scaling-stroke',
+              })),
+              xTicks.map((tick) => h('line', {
+                key: `xgrid${tick.index}`,
+                x1: tick.x.toFixed(2), y1: 0, x2: tick.x.toFixed(2), y2: TREND_H,
+                stroke: 'currentColor', strokeWidth: 1, opacity: 0.08,
+                vectorEffect: 'non-scaling-stroke',
+              })),
+              warnInside
+                ? h('line', {
+                  x1: 0, y1: warnY.toFixed(2), x2: TREND_W, y2: warnY.toFixed(2),
+                  stroke: LEVEL.warn.color, strokeWidth: 1, strokeDasharray: '3 4', opacity: 0.5,
+                  vectorEffect: 'non-scaling-stroke',
+                })
+                : null,
+              area ? h('path', { d: area, fill: color, fillOpacity: 0.12, stroke: 'none' }) : null,
+              pts.length > 1
+                ? h('path', {
+                  d: line, fill: 'none', stroke: color, strokeWidth: 1.6,
+                  strokeLinejoin: 'round', strokeLinecap: 'round', vectorEffect: 'non-scaling-stroke',
+                })
+                : null,
+            ),
+            // 圆点和准线一律用 HTML 绝对定位到画布上：SVG 是 preserveAspectRatio="none" 横向拉伸的，
+            // 画在里面的 circle 会被一起拉成椭圆（看着又大又扁），HTML 元素不受这个缩放影响。
+            last
+              ? h('div', {
+                className: 'ow-plot-dot ow-plot-dot--last',
+                style: { left: `${(last.x / TREND_W) * 100}%`, top: `${(last.y / TREND_H) * 100}%`, background: color },
+              })
+              : null,
+            hovered
+              ? h('div', { className: 'ow-cross', style: { left: `${(hovered.x / TREND_W) * 100}%` } })
+              : null,
+            hovered
+              ? h('div', {
+                className: 'ow-plot-dot',
+                style: { left: `${(hovered.x / TREND_W) * 100}%`, top: `${(hovered.y / TREND_H) * 100}%`, background: color },
+              })
+              : null,
+            hovered
+              ? h('div', { className: 'ow-tip', style: { left: `${hoverLeft}%`, top: `${(hovered.y / TREND_H) * 100}%` } },
+                h('b', null, fmtHm(hovered.at)),
+                ` · 可用 ${hovered.avail.toFixed(1)}% · 已用 ${hovered.used.toFixed(1)}%`)
+              : null,
+          ),
+          h('div', { className: 'ow-chart-x' },
+            xTicks.map((tick) => h('span', {
+              key: `xt${tick.index}`,
+              style: {
+                left: `${(tick.x / TREND_W) * 100}%`,
+                // 首个左对齐、末个右对齐，免得标签被画布边缘切掉
+                transform: tick.index === 0 ? 'none' : tick.index === pts.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)',
+              },
+            }, fmtHm(tick.at))),
+          ),
+        ),
+      )
+    }
+
     function InspectView({ state, results, running, onRun, onSaveThresholds, onSchedule }) {
       const hosts = state?.hosts ?? []
       const lastInspect = state?.lastInspect ?? {}
@@ -695,6 +905,7 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = useState(null)
       // 正在准备「带去对话」的那一条；null = 没打开
       const [handoff, setHandoff] = useState(null)
+      const [trendHostId, setTrendHostId] = useState('')
 
       const rows = useMemo(() => hosts.map((host) => {
         const record = lastInspect[host.id]
@@ -925,40 +1136,35 @@ window.__ModuleLoader__.load({
           : null,
 
         trendRows.length > 0
-          ? h('div', { style: { marginTop: 4 } },
-            h('div', { className: 'ow-h2' }, '最近走势'),
-            h('div', { className: 'ow-note', style: { marginBottom: 8 } },
-              '每根柱子是一次自动巡检：越高说明内存越紧（按「已用比例」画），红色是已经越过严重线。'),
-            trendRows.map(({ host, points, memMin, diskMax }) => h('div', {
-              key: host.id,
-              className: 'ow-card',
-              style: { marginBottom: 10 },
-            },
-              h('div', { className: 'ow-row', style: { gap: 8 } },
-                h('b', null, host.name || host.host),
-                h('div', { className: 'ow-spacer' }),
-                h('span', { className: 'ow-note' }, `${points.length} 次采样 · ${fmtClock(points[0].at)} → ${fmtClock(points[points.length - 1].at)}`),
+          ? (() => {
+            const active = trendRows.find((row) => row.host.id === trendHostId) ?? trendRows[0]
+            const samples = active.points
+            return h('div', { style: { marginTop: 4 } },
+              h('div', { className: 'ow-h2' }, '最近走势'),
+              h('div', { className: 'ow-note', style: { marginBottom: 6 } },
+                `取最近 ${TREND_POINTS} 次巡检的「内存可用」：往上走是松快，往下走是变紧。纵轴按这台机器自己的波动范围自适应（跨度至少 ${TREND_MIN_SPAN} 个百分点），所以别拿两台机器的斜率直接比大小 —— 看数字。鼠标滑过曲线看某个时间点的具体数值。`),
+              h('div', { className: 'ow-trend-tabs' }, trendRows.map((row) => h(Btn, {
+                key: row.host.id,
+                tiny: true,
+                kind: row.host.id === active.host.id ? 'primary' : undefined,
+                onClick: () => setTrendHostId(row.host.id),
+              }, h(Dot, { level: levelOf((lastInspect ?? {})[row.host.id]) }), ` ${row.host.name || row.host.host}`))),
+              h('div', { className: 'ow-card', style: { padding: '10px 12px' } },
+                h('div', { className: 'ow-row', style: { gap: 8, marginBottom: 2 } },
+                  h('b', null, active.host.name || active.host.host),
+                  h('div', { className: 'ow-spacer' }),
+                  h('span', { className: 'ow-note' }, `${samples.length} 次采样 · ${fmtClock(samples[0].at)} → ${fmtClock(samples[samples.length - 1].at)}`),
+                ),
+                h(TrendChart, { points: samples, rules, hostName: active.host.name || active.host.host }),
+                h('div', { className: 'ow-row', style: { marginTop: 6, gap: 12, flexWrap: 'wrap' } },
+                  h('span', { className: 'ow-note' }, `内存可用最低 ${active.memMin ? `${active.memMin.value.toFixed(1)}%（${fmtHm(active.memMin.at)}）` : '-'}`),
+                  h('span', { className: 'ow-note' }, `磁盘最高 ${active.diskMax ? `${Math.round(active.diskMax.value)}%` : '-'}`),
+                  h('div', { className: 'ow-spacer' }),
+                  h('span', { className: 'ow-note' }, '纵轴是自适应范围，不是 0–100%'),
+                ),
               ),
-              h('div', { className: 'ow-spark' }, points.map((point, index) => {
-                const avail = Number.isFinite(point.memAvailPct) ? point.memAvailPct : 100
-                const used = Math.max(0, Math.min(100, 100 - avail))
-                const color = avail <= (rules.memAvailPct?.crit ?? 8)
-                  ? LEVEL.crit.color
-                  : avail <= (rules.memAvailPct?.warn ?? 15) ? LEVEL.warn.color : LEVEL.ok.color
-                return h('i', {
-                  key: index,
-                  title: `${fmtClock(point.at)} · 内存可用 ${Math.round(avail)}%`,
-                  style: { height: `${Math.max(4, used)}%`, background: color },
-                })
-              })),
-              h('div', { className: 'ow-row', style: { marginTop: 6, gap: 10 } },
-                h('span', { className: 'ow-note' }, `内存可用最低 ${memMin ? `${Math.round(memMin.value)}%（${fmtClock(memMin.at)}）` : '-'}`),
-                h('span', { className: 'ow-note' }, `磁盘最高 ${diskMax ? `${Math.round(diskMax.value)}%（${fmtClock(diskMax.at)}）` : '-'}`),
-                h('div', { className: 'ow-spacer' }),
-                h('span', { className: 'ow-note' }, '「处理」按钮可以把这条带到对话里'),
-              ),
-            )),
-          )
+            )
+          })()
           : null,
       )
     }
@@ -1530,7 +1736,7 @@ window.__ModuleLoader__.load({
 
         // 离线测试用的把手：不装插件也能验证「问题 → 求助稿 → 送进对话」这条链路
         try {
-          globalThis.__DSH_OPS_TEST__ = { buildHandoff, openHandoffInChat, metricLine, isQuietTiny, diskLevelOf, signatureOf, POLL_MS }
+          globalThis.__DSH_OPS_TEST__ = { buildHandoff, openHandoffInChat, metricLine, isQuietTiny, diskLevelOf, signatureOf, POLL_MS, smoothPath, trendPoints, trendDomain, hoverIndexAt, xTickIndexes, TrendChart }
         } catch { /* 没有 globalThis 就算了 */ }
 
         return () => {

@@ -279,22 +279,97 @@ window.__ModuleLoader__.load({
       while (value >= 1024 && index < units.length - 1) { value /= 1024; index++ }
       return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`
     }
-    const fmtAgo = (ts) => {
+    /* ---------------------------------------------- 时钟（相对时间用） */
+
+    // 「刚刚 / 13 分钟前 / 还有 2 分钟」这类话只在重绘时算一次。数据没变就不重绘
+    // （见下面的 signature 逻辑），文案就会冻在渲染那一刻：17:11 巡检完，17:24 还写着「刚刚」。
+    // 这里挂一只共享时钟：只有订阅它的那几段文字会重绘，5 秒一跳，不动整棵树。
+    const CLOCK_MS = 5000
+    let clockNow = Date.now()
+    const clockSubs = new Set()
+    let clockTimer = null
+
+    function clockBeat() {
+      clockNow = Date.now()
+      for (const push of clockSubs) push(clockNow)
+    }
+
+    // 标签页在后台时浏览器本来就会掐定时器，别白算；切回来立刻对一次表
+    function clockOnBack() {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      clockBeat()
+    }
+
+    function clockStart() {
+      if (clockTimer) return
+      clockTimer = setInterval(clockOnBack, CLOCK_MS)
+      // 浏览器里 id 是数字，没有 unref；无头环境（离线测试）里是 Timeout，要 unref 才不会让进程挂住
+      if (clockTimer && typeof clockTimer.unref === 'function') clockTimer.unref()
+      if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        document.addEventListener('visibilitychange', clockOnBack)
+      }
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('focus', clockOnBack)
+      }
+    }
+
+    function clockStop() {
+      clearInterval(clockTimer)
+      clockTimer = null
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', clockOnBack)
+      }
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('focus', clockOnBack)
+      }
+    }
+
+    /** 当前时刻，跟着共享时钟走。订阅它的组件多走一步就重绘一次。 */
+    function useNow() {
+      const [now, setNow] = useState(clockNow)
+      useEffect(() => {
+        clockSubs.add(setNow)
+        clockStart()
+        // 挂载时先对一次：父组件可能几秒前就渲染好了，别从旧时间开始往回数
+        const fresh = Date.now()
+        if (fresh !== clockNow) {
+          clockNow = fresh
+          setNow(fresh)
+        }
+        return () => {
+          clockSubs.delete(setNow)
+          if (clockSubs.size === 0) clockStop()
+        }
+      }, [])
+      return now
+    }
+
+    const fmtAgo = (ts, now = Date.now()) => {
       if (!ts) return '还没巡检过'
-      const diff = Math.max(0, Date.now() - ts)
+      const diff = Math.max(0, now - ts)
       if (diff < 60e3) return '刚刚'
       if (diff < 3600e3) return `${Math.round(diff / 60e3)} 分钟前`
       if (diff < 86400e3) return `${Math.round(diff / 3600e3)} 小时前`
       return `${Math.round(diff / 86400e3)} 天前`
     }
-    const fmtIn = (ts) => {
+    const fmtIn = (ts, now = Date.now()) => {
       if (!ts) return ''
-      const diff = ts - Date.now()
+      const diff = ts - now
       if (diff <= 0) return '马上'
       if (diff < 60e3) return `${Math.round(diff / 1000)} 秒后`
       if (diff < 3600e3) return `${Math.round(diff / 60e3)} 分钟后`
       if (diff < 86400e3) return `${Math.round(diff / 3600e3)} 小时后`
       return `${Math.round(diff / 86400e3)} 天后`
+    }
+
+    /** 一段「相对时间」文本。自己看表，所以父组件不重绘它也照样走。 */
+    function Ago({ at, lead = '', tail = '' }) {
+      return `${lead}${fmtAgo(at, useNow())}${tail}`
+    }
+
+    /** 反过来：「还有 N 分钟」——下次自动巡检、下次重试。 */
+    function In({ at, lead = '', tail = '' }) {
+      return `${lead}${fmtIn(at, useNow())}${tail}`
     }
 
     const fmtClock = (ts) => {
@@ -305,11 +380,17 @@ window.__ModuleLoader__.load({
     }
 
     /** 「1 分钟后重试（第 1/3 次）」—— 全失败后宿主会自己快速重试，得让用户看见。 */
-    const retryHint = (retry) => {
+    const retryHint = (retry, now = Date.now()) => {
       if (!retry || !retry.at) return ''
       const count = retry.count ?? 1
       const max = retry.max ?? 3
-      return `${fmtIn(retry.at)}自动重试（第 ${count}/${max} 次）`
+      return `${fmtIn(retry.at, now)}自动重试（第 ${count}/${max} 次）`
+    }
+
+    /** 重试预告：自己看表，倒计时会真的往下走。 */
+    function RetryHint({ retry, lead = '', tail = '' }) {
+      const text = retryHint(retry, useNow())
+      return text ? `${lead}${text}${tail}` : ''
     }
 
     // 只到分钟，x 轴刻度和气泡都用它
@@ -530,7 +611,9 @@ window.__ModuleLoader__.load({
         ),
         h('div', { className: 'ow-verdict' },
           h('span', { className: 'ow-pill', style: { color: theme.color, borderColor: theme.color, background: theme.soft } }, verdictText(record)),
-          h('span', { className: 'ow-note' }, snap ? `巡检于 ${fmtAgo(record.at)}` : record ? `连不上 · ${fmtAgo(record.at)}` : '点右边巡检一次'),
+          h('span', { className: 'ow-note' }, snap
+            ? h(Ago, { at: record.at, lead: '巡检于 ' })
+            : record ? h(Ago, { at: record.at, lead: '连不上 · ' }) : '点右边巡检一次'),
         ),
         record?.error
           ? h('div', { className: 'ow-note', style: { marginTop: 6 } }, `原因：${String(record.error).slice(0, 120)}`)
@@ -570,7 +653,6 @@ window.__ModuleLoader__.load({
       const downHosts = rows.filter((row) => row.record?.error).length
       const allDown = hosts.length > 0 && downHosts === hosts.length
       const retry = state?.scheduler?.retry
-      const retryLine = retryHint(retry)
 
       if (hosts.length === 0) {
         return h('div', { className: 'ow-empty' },
@@ -593,7 +675,7 @@ window.__ModuleLoader__.load({
             h('b', null, `${hosts.length} 台一台都没连上`),
             h('div', { style: { marginTop: 4 } },
               '这多半不是服务器的问题，而是这台电脑的网络/代理还没就绪（刚开机、刚唤醒、VPN 或公司代理没连上）。',
-              retryLine ? ` ${retryLine}。` : ' 这轮重试用完了 —— 网络恢复后点「全部巡检一次」即可。'),
+              retry?.at ? h(RetryHint, { retry, lead: ' ', tail: '。' }) : ' 这轮重试用完了 —— 网络恢复后点「全部巡检一次」即可。'),
             h('div', { className: 'ow-note', style: { marginTop: 4 } },
               `失败原因：${String(rows[0]?.record?.error ?? '').slice(0, 120)}`),
           )
@@ -710,7 +792,7 @@ window.__ModuleLoader__.load({
                   ),
                   h('td', null, host.authType === 'password' ? '密码' : '私钥'),
                   h('td', null, host.group || '-'),
-                  h('td', { className: 'num' }, record ? fmtAgo(record.at) : '未巡检'),
+                  h('td', { className: 'num' }, record ? h(Ago, { at: record.at }) : '未巡检'),
                   h('td', null,
                     h('div', { className: 'ow-row', style: { gap: 4, justifyContent: 'flex-end' } },
                       test ? h('span', { className: 'ow-pill' },
@@ -1014,7 +1096,7 @@ window.__ModuleLoader__.load({
               kind: auto.enabled && auto.everyMinutes === minutes ? 'primary' : 'ghost',
               onClick: () => onSchedule({ auto: { enabled: true, everyMinutes: minutes } }),
             }, `${minutes} 分钟`)),
-            h('span', { className: 'ow-note' }, auto.lastAutoAt ? `上次自动巡检 ${fmtAgo(auto.lastAutoAt)}` : '还没跑过自动巡检'),
+            h('span', { className: 'ow-note' }, auto.lastAutoAt ? h(Ago, { at: auto.lastAutoAt, lead: '上次自动巡检 ' }) : '还没跑过自动巡检'),
           ),
           h('div', { className: 'ow-row', style: { marginTop: 8, gap: 6 } },
             h(Btn, {
@@ -1411,14 +1493,20 @@ window.__ModuleLoader__.load({
 
     // 绝对时间：今天的只给时分秒，隔天的带上月日。相对时间会「冻住」——
     // 轮询只在巡检结果变了才重画，所以顶部以绝对时间为准，相对时间只作辅助。
-    function stampOf(ts) {
+    function stampOf(ts, now = Date.now()) {
       if (!ts) return ''
       const date = new Date(ts)
-      const now = new Date()
-      const sameDay = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+      const ref = new Date(now)
+      const sameDay = date.getFullYear() === ref.getFullYear() && date.getMonth() === ref.getMonth() && date.getDate() === ref.getDate()
       const month = String(date.getMonth() + 1).padStart(2, '0')
       const day = String(date.getDate()).padStart(2, '0')
       return sameDay ? clockSec(ts) : `${month}-${day} ${clockSec(ts)}`
+    }
+
+    /** 「17:11:16（13 分钟前）」：绝对时间为主、相对时间为辅，一起随时钟走（跨天时也会补上月日）。 */
+    function InspectedAt({ at }) {
+      const now = useNow()
+      return at ? `${stampOf(at, now)}（${fmtAgo(at, now)}）` : '还没巡检过'
     }
 
     // 桌面端没有 F5（菜单里的「重新加载页面」只在开发版出现），所以自己给一个入口。
@@ -1633,7 +1721,8 @@ window.__ModuleLoader__.load({
       const auto = sched.auto ?? { enabled: false, everyMinutes: 15 }
       const daily = sched.daily ?? { enabled: false, hour: 9, minute: 0 }
       const autoText = auto.enabled
-        ? `自动巡检：每 ${auto.everyMinutes} 分钟${auto.nextAutoAt ? `（下次 ${fmtIn(auto.nextAutoAt)}）` : ''}`
+        ? h('span', null, `自动巡检：每 ${auto.everyMinutes} 分钟`,
+          auto.nextAutoAt ? h(In, { at: auto.nextAutoAt, lead: '（下次 ', tail: '）' }) : null)
         : '自动巡检：已关（只在你点的时候跑）'
       const dailyText = daily.enabled
         ? `日报：每天 ${String(daily.hour).padStart(2, '0')}:${String(daily.minute).padStart(2, '0')}${sched.daily?.lastReportDate ? `（今天已生成）` : ''}`
@@ -1655,7 +1744,7 @@ window.__ModuleLoader__.load({
           ),
           h('div', { className: 'ow-sub' },
             h('span', { title: lastAt ? new Date(lastAt).toLocaleString() : '还没有任何一台巡检过' },
-              `上次巡检 ${lastAt ? `${stampOf(lastAt)}（${fmtAgo(lastAt)}）` : '还没巡检过'}`),
+              '上次巡检 ', h(InspectedAt, { at: lastAt })),
             h('span', null, autoText),
             h('span', null, dailyText),
             h('span', null, state.transport?.ssh2 ? `SSH ${state.transport.version ?? 'ssh2'}` : '未装 ssh2（密码登录不可用）'),
@@ -1804,7 +1893,20 @@ window.__ModuleLoader__.load({
 
         // 离线测试用的把手：不装插件也能验证「问题 → 求助稿 → 送进对话」这条链路
         try {
-          globalThis.__DSH_OPS_TEST__ = { buildHandoff, openHandoffInChat, metricLine, isQuietTiny, diskLevelOf, signatureOf, POLL_MS, smoothPath, trendPoints, trendDomain, hoverIndexAt, xTickIndexes, TrendChart }
+          globalThis.__DSH_OPS_TEST__ = {
+            buildHandoff, openHandoffInChat, metricLine, isQuietTiny, diskLevelOf, signatureOf, POLL_MS,
+            smoothPath, trendPoints, trendDomain, hoverIndexAt, xTickIndexes, TrendChart,
+            // 相对时间 + 那只共享时钟：验证「数据没变，文案也会自己走」
+            fmtAgo, fmtIn, stampOf, retryHint, Ago, In, RetryHint, InspectedAt,
+            clock: {
+              ms: CLOCK_MS,
+              now: () => clockNow,
+              beat: clockBeat,
+              onBack: clockOnBack,
+              size: () => clockSubs.size,
+              subscribe: (fn) => { clockSubs.add(fn); return () => clockSubs.delete(fn) },
+            },
+          }
         } catch { /* 没有 globalThis 就算了 */ }
 
         return () => {

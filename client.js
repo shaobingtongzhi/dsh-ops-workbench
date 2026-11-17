@@ -1400,6 +1400,15 @@ window.__ModuleLoader__.load({
     // 轮询间隔；这个值只影响「自动巡检结果多久出现在页面上」，不影响巡检本身
     const POLL_MS = 20000
 
+    // 这份 bundle 是什么时候被浏览器执行的。热更新生效会重新执行整份文件，
+    // 所以这个时间一跳，就说明页面换上了新代码——不用猜，也不用重启 DSH。
+    const LOADED_AT = Date.now()
+
+    function clockSec(ts) {
+      const date = new Date(ts)
+      return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
+    }
+
     // 一次 state 里「值得重画」的部分：主机增删、每台最近一次巡检的时间与级别、
     // 定时器的上次自动巡检时间、日报最近生成日期。其它字段（阈值草稿等）变了也重画，但这里不做区分。
     function signatureOf(next) {
@@ -1621,6 +1630,7 @@ window.__ModuleLoader__.load({
             h('span', null, autoText),
             h('span', null, dailyText),
             h('span', null, state.transport?.ssh2 ? `SSH ${state.transport.version ?? 'ssh2'}` : '未装 ssh2（密码登录不可用）'),
+            h('span', { title: '插件代码每次改完会自己换上来；这行时间变了就说明页面已经是新代码' }, `页面代码 ${clockSec(LOADED_AT)} 载入`),
           ),
           error ? h('div', { className: 'ow-note', style: { color: LEVEL.crit.color, marginTop: 6 } }, error) : null,
         ),

@@ -1409,6 +1409,16 @@ window.__ModuleLoader__.load({
       return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
     }
 
+    // 桌面端没有 F5（菜单里的「重新加载页面」只在开发版出现），所以自己给一个入口。
+    // location.reload 会让页面重新走一遍引导，拿到最新的插件版本号。
+    function reloadPage() {
+      try {
+        if (typeof location !== 'undefined' && typeof location.reload === 'function') location.reload()
+      } catch (error) {
+        reportError('page.reload', error)
+      }
+    }
+
     // 一次 state 里「值得重画」的部分：主机增删、每台最近一次巡检的时间与级别、
     // 定时器的上次自动巡检时间、日报最近生成日期。其它字段（阈值草稿等）变了也重画，但这里不做区分。
     function signatureOf(next) {
@@ -1624,6 +1634,12 @@ window.__ModuleLoader__.load({
             state.hosts.length > 0 ? h('span', { className: 'ow-pill' }, h(Dot, { level: critCount > 0 ? 'crit' : 'ok' }), `${state.hosts.length} 台 · ${critCount > 0 ? `${critCount} 台要处理` : '暂无紧急'}`) : null,
             h('div', { className: 'ow-spacer' }),
             h(Btn, { tiny: true, kind: 'ghost', onClick: load }, '刷新'),
+            h(Btn, {
+              tiny: true,
+              kind: 'ghost',
+              onClick: reloadPage,
+              title: '重新加载整个页面：界面代码没换上来时点这里（桌面端没有 F5）',
+            }, '重载页面'),
           ),
           h('div', { className: 'ow-sub' },
             h('span', null, `最近巡检 ${lastAt ? fmtAgo(lastAt) : '还没巡检过'}`),

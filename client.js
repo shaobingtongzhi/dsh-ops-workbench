@@ -120,6 +120,8 @@ window.__ModuleLoader__.load({
       .ow-empty { text-align:center; padding:34px 18px; border:1px dashed var(--ow-line); border-radius:12px; color:var(--ow-mute); }
       .ow-empty b { display:block; color:inherit; font-size:13.5px; margin-bottom:5px; }
       .ow-note { font-size:11.5px; color:var(--ow-mute); }
+      .ow-banner { margin:0 0 14px; padding:11px 13px; border-radius:10px; border:1px solid rgba(138,143,152,.45); background:rgba(138,143,152,.10); font-size:12.5px; line-height:1.55; }
+      .ow-banner b { font-size:13px; }
       .ow-banner { display:flex; gap:9px; align-items:flex-start; font-size:12px; padding:9px 11px; border-radius:8px;
         border:1px solid var(--ow-line); background:var(--ow-fill); margin-bottom:14px; }
       .ow-guide { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; align-items:start; }
@@ -155,6 +157,8 @@ window.__ModuleLoader__.load({
       warn: { color: '#d89b1b', soft: 'rgba(216,155,27,.14)', label: '有隐患' },
       info: { color: '#2f6feb', soft: 'rgba(47,111,235,.12)', label: '提一句' },
       ok: { color: '#2e9e5b', soft: 'rgba(46,158,91,.13)', label: '正常' },
+      // 连不上 ≠ 服务器挂了：多半是本机网络/代理还没就绪。所以用灰点，不占用红/橙语义。
+      unreachable: { color: '#8a8f98', soft: 'rgba(138,143,152,.16)', label: '连不上' },
       unknown: { color: 'rgba(127,127,127,.75)', soft: 'rgba(127,127,127,.12)', label: '未巡检' },
     }
 
@@ -298,6 +302,14 @@ window.__ModuleLoader__.load({
       const d = new Date(ts)
       const pad = (n) => String(n).padStart(2, '0')
       return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    }
+
+    /** 「1 分钟后重试（第 1/3 次）」—— 全失败后宿主会自己快速重试，得让用户看见。 */
+    const retryHint = (retry) => {
+      if (!retry || !retry.at) return ''
+      const count = retry.count ?? 1
+      const max = retry.max ?? 3
+      return `${fmtIn(retry.at)}自动重试（第 ${count}/${max} 次）`
     }
 
     // 只到分钟，x 轴刻度和气泡都用它
@@ -518,8 +530,11 @@ window.__ModuleLoader__.load({
         ),
         h('div', { className: 'ow-verdict' },
           h('span', { className: 'ow-pill', style: { color: theme.color, borderColor: theme.color, background: theme.soft } }, verdictText(record)),
-          h('span', { className: 'ow-note' }, snap ? `巡检于 ${fmtAgo(record.at)}` : record ? `最近一次失败 ${fmtAgo(record.at)}` : '点右边巡检一次'),
+          h('span', { className: 'ow-note' }, snap ? `巡检于 ${fmtAgo(record.at)}` : record ? `连不上 · ${fmtAgo(record.at)}` : '点右边巡检一次'),
         ),
+        record?.error
+          ? h('div', { className: 'ow-note', style: { marginTop: 6 } }, `原因：${String(record.error).slice(0, 120)}`)
+          : null,
         snap
           ? h('div', { className: 'ow-metrics' },
             h(Metric, { label: 'CPU', value: fmtPct(snap.cpu.pct), pct: snap.cpu.pct, level: cpuLevel }),
@@ -552,6 +567,10 @@ window.__ModuleLoader__.load({
       const rows = hosts.map((host) => ({ host, record: lastInspect[host.id] }))
       const critHosts = rows.filter((row) => row.record?.level === 'crit').length
       const warnHosts = rows.filter((row) => row.record?.level === 'warn').length
+      const downHosts = rows.filter((row) => row.record?.error).length
+      const allDown = hosts.length > 0 && downHosts === hosts.length
+      const retry = state?.scheduler?.retry
+      const retryLine = retryHint(retry)
 
       if (hosts.length === 0) {
         return h('div', { className: 'ow-empty' },
@@ -569,6 +588,16 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ow-spacer' }),
           h(Btn, { kind: 'primary', onClick: onInspectAll, disabled: busyIds.size > 0 }, busyIds.size > 0 ? '巡检中…' : '全部巡检一次'),
         ),
+        allDown
+          ? h('div', { className: 'ow-banner' },
+            h('b', null, `${hosts.length} 台一台都没连上`),
+            h('div', { style: { marginTop: 4 } },
+              '这多半不是服务器的问题，而是这台电脑的网络/代理还没就绪（刚开机、刚唤醒、VPN 或公司代理没连上）。',
+              retryLine ? ` ${retryLine}。` : ' 这轮重试用完了 —— 网络恢复后点「全部巡检一次」即可。'),
+            h('div', { className: 'ow-note', style: { marginTop: 4 } },
+              `失败原因：${String(rows[0]?.record?.error ?? '').slice(0, 120)}`),
+          )
+          : null,
         h('div', { className: 'ow-grid' },
           rows.map(({ host, record }) => h(HostCard, {
             key: host.id,

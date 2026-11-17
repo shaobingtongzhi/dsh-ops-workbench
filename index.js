@@ -100,7 +100,47 @@ export function apply(ctx) {
 const TICK_MS = 30_000
 const HISTORY_LIMIT = 480 // 15 分钟一次 ≈ 5 天；再老的数据对判断没帮助
 
+// 「全部连不上」几乎都不是服务器的问题，而是这台电脑刚开机/刚唤醒，网络或代理还没就绪。
+// 这种情况等下一个 15 分钟周期太久，改成 1、2、3 分钟后各重试一次。
+const RETRY_MAX = 3
+const RETRY_BASE_MS = 60_000
+const ATTEMPT_LIMIT = 20
+
 let inspecting = false
+let retryAt = 0
+let retryCount = 0
+
+/**
+ * 记一次巡检尝试，并决定要不要赶紧重试。
+ * 全失败 → 递增退避重试；只要有一台通，就认为网络是好的，清空重试。
+ */
+export function noteAttempt(results, at = Date.now()) {
+  const failed = results.filter((item) => !item.ok)
+  const allFailed = results.length > 0 && failed.length === results.length
+  if (allFailed) {
+    retryCount += 1
+    retryAt = retryCount <= RETRY_MAX ? at + RETRY_BASE_MS * retryCount : 0
+    if (!retryAt) retryCount = 0
+  } else {
+    retryAt = 0
+    retryCount = 0
+  }
+  return {
+    at,
+    total: results.length,
+    failed: failed.length,
+    allFailed,
+    retryAt,
+    errors: failed.slice(0, 5).map((item) => ({
+      hostId: item.hostId,
+      message: String(item.error ?? '').slice(0, 160),
+    })),
+  }
+}
+
+export function retryState() {
+  return { at: retryAt, count: retryCount, max: RETRY_MAX, delayMs: RETRY_BASE_MS }
+}
 
 /** 本地日期 yyyy-mm-dd（用户就这一台电脑，按本机时区算最直观）。 */
 function localDate(ts = Date.now()) {
@@ -148,6 +188,8 @@ export function schedulerView(state, now = Date.now()) {
   return {
     auto: { ...auto, lastAutoAt, nextAutoAt },
     daily: { ...daily, lastReportDate: state.settings.lastReportDate || '', nextDailyAt },
+    retry: retryState(),
+    attemptLog: (state.attemptLog ?? []).slice(0, 5),
     historyLimit: HISTORY_LIMIT,
   }
 }
@@ -173,6 +215,8 @@ function withHistory(state, lastInspect, hostIds) {
   for (const id of hostIds) {
     const record = lastInspect[id]
     if (!record) continue
+    // 连不上的那次没有快照 —— 别把空洞当成「内存掉到 0%」画进走势
+    if (!record.snapshot) continue
     const list = Array.isArray(history[id]) ? history[id] : []
     history[id] = [...list, historyPoint(record)].slice(-HISTORY_LIMIT)
   }
@@ -204,7 +248,7 @@ async function runInspection(hosts, thresholds) {
         hostId: host.id,
         ok: false,
         durationMs: Date.now() - started,
-        level: 'crit',
+        level: 'unreachable',
         error: String(error?.message ?? error),
         issues: [{
           level: 'crit',
@@ -225,7 +269,7 @@ function mergeInspect(lastInspect, results, at = Date.now()) {
     if (!result.ok) {
       next[result.hostId] = {
         at,
-        level: 'crit',
+        level: 'unreachable',
         issues: result.issues,
         error: result.error,
         snapshot: null,
@@ -279,27 +323,33 @@ async function tick(ctx) {
   const now = Date.now()
   const auto = autoSettings(state)
 
-  if (auto.enabled && !inspecting) {
-    const last = Number(state.settings.lastAutoAt) || 0
-    if (now - last >= auto.everyMinutes * 60_000) {
-      inspecting = true
-      let results = []
-      try {
-        results = await runInspection(state.hosts, thresholdsOf(state))
-      } finally {
-        inspecting = false
-      }
-      const fresh = await readState()
-      const lastInspect = mergeInspect(fresh.lastInspect, results, now)
-      state.settings.lastAutoAt = now
-      await writeState({
-        ...fresh,
-        lastInspect,
-        history: withHistory(fresh, lastInspect, state.hosts.map((host) => host.id)),
-        settings: { ...fresh.settings, lastAutoAt: now },
-      })
-      ctx.logger?.debug?.('[ops-workbench] 自动巡检完成：%d 台', results.length)
+  if (!auto.enabled) {
+    retryAt = 0
+    retryCount = 0
+  }
+
+  const retryDue = retryAt > 0 && now >= retryAt
+  const cadenceDue = now - (Number(state.settings.lastAutoAt) || 0) >= auto.everyMinutes * 60_000
+
+  if (auto.enabled && !inspecting && (retryDue || cadenceDue)) {
+    inspecting = true
+    let results = []
+    try {
+      results = await runInspection(state.hosts, thresholdsOf(state))
+    } finally {
+      inspecting = false
     }
+    const attempt = noteAttempt(results, now)
+    const fresh = await readState()
+    const lastInspect = mergeInspect(fresh.lastInspect, results, now)
+    await writeState({
+      ...fresh,
+      lastInspect,
+      history: withHistory(fresh, lastInspect, state.hosts.map((host) => host.id)),
+      settings: { ...fresh.settings, lastAutoAt: now },
+      attemptLog: [attempt, ...(fresh.attemptLog ?? [])].slice(0, ATTEMPT_LIMIT),
+    })
+    ctx.logger?.debug?.('[ops-workbench] 自动巡检完成：%d 台，失败 %d 台', attempt.total, attempt.failed)
   }
 
   await maybeDailyReport(ctx)
@@ -348,6 +398,7 @@ async function handleState(res) {
     settings: state.settings,
     thresholds: thresholdsOf(state),
     scheduler: schedulerView(state, now),
+    attempts: state.attemptLog ?? [],
     reportsDir: reportsDir(),
     transport: transportInfo(),
     diagnostics: diagnosticCatalog(),
@@ -443,6 +494,7 @@ async function handleInspect(res, body) {
   // 手动点了就算「刚跑过」，别让定时器紧接着再跑一遍
   const fresh = await readState()
   const at = Date.now()
+  const attempt = noteAttempt(results, at)
   const lastInspect = mergeInspect(fresh.lastInspect, results, at)
   const hostIds = targets.map((host) => host.id)
   await writeState({
@@ -450,8 +502,9 @@ async function handleInspect(res, body) {
     lastInspect,
     history: withHistory(fresh, lastInspect, hostIds),
     settings: { ...fresh.settings, lastAutoAt: at },
+    attemptLog: [attempt, ...(fresh.attemptLog ?? [])].slice(0, ATTEMPT_LIMIT),
   })
-  return sendJson(res, 200, { results, lastInspect })
+  return sendJson(res, 200, { results, lastInspect, retry: retryState() })
 }
 
 async function handleDiag(res, body) {

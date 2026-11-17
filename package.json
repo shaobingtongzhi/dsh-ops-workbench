@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops-workbench",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Server ops workbench for DeepSeek Harness: read-only SSH health checks, triage playbooks, and a daily ops report.",
   "license": "MIT",
   "engines": {

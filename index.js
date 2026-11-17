@@ -100,7 +100,7 @@ export function apply(ctx) {
 const TICK_MS = 30_000
 const HISTORY_LIMIT = 480 // 15 分钟一次 ≈ 5 天；再老的数据对判断没帮助
 
-// 「全部连不上」几乎都不是服务器的问题，而是这台电脑刚开机/刚唤醒，网络或代理还没就绪。
+// 「连不上」几乎都不是服务器的问题，而是这台电脑刚开机/刚唤醒，网络或代理还没就绪。
 // 这种情况等下一个 15 分钟周期太久，改成 1、2、3 分钟后各重试一次。
 const RETRY_MAX = 3
 const RETRY_BASE_MS = 60_000
@@ -109,20 +109,35 @@ const ATTEMPT_LIMIT = 20
 let inspecting = false
 let retryAt = 0
 let retryCount = 0
+// 这一轮要补测的主机 id；空数组表示「没有针对性重试，跑全量」。
+let retryHostIds = []
 
 /**
  * 记一次巡检尝试，并决定要不要赶紧重试。
- * 全失败 → 递增退避重试；只要有一台通，就认为网络是好的，清空重试。
+ *
+ * 全失败和部分失败都要重试。只认「全灭」是不够的：这台电脑从休眠/断网恢复时，
+ * 最常见的形态恰恰是部分就绪 —— 走内网的 1.71.x 先通了，走公网和办公网的另一半
+ * 还卡在超时里。5 台通 2 台挂 3 台，allFailed 是 false，于是不重试、直接把这 3 台
+ * 判成宕机挂到下一个 15 分钟周期，看起来就像「三台同时断了」。
+ *
+ * 退避 1/2/3 分钟，最多 RETRY_MAX 次；仍然不通才下结论，等下一个正常周期。
  */
 export function noteAttempt(results, at = Date.now()) {
   const failed = results.filter((item) => !item.ok)
   const allFailed = results.length > 0 && failed.length === results.length
-  if (allFailed) {
+  if (failed.length > 0) {
     retryCount += 1
-    retryAt = retryCount <= RETRY_MAX ? at + RETRY_BASE_MS * retryCount : 0
-    if (!retryAt) retryCount = 0
+    if (retryCount <= RETRY_MAX) {
+      retryAt = at + RETRY_BASE_MS * retryCount
+      retryHostIds = failed.map((item) => item.hostId).filter(Boolean)
+    } else {
+      retryAt = 0
+      retryHostIds = []
+      retryCount = 0
+    }
   } else {
     retryAt = 0
+    retryHostIds = []
     retryCount = 0
   }
   return {
@@ -139,7 +154,18 @@ export function noteAttempt(results, at = Date.now()) {
 }
 
 export function retryState() {
-  return { at: retryAt, count: retryCount, max: RETRY_MAX, delayMs: RETRY_BASE_MS }
+  return { at: retryAt, count: retryCount, max: RETRY_MAX, delayMs: RETRY_BASE_MS, hostIds: [...retryHostIds] }
+}
+
+/**
+ * 决定这一轮巡检跑哪几台。
+ * 正常周期跑全量；只是重试到点，就只补上次失败的那几台 —— 通了的不必再连一次。
+ */
+export function pickHosts(hosts, { retryOnly }) {
+  if (!retryOnly || retryHostIds.length === 0) return hosts
+  const wanted = new Set(retryHostIds)
+  const subset = hosts.filter((host) => wanted.has(host.id))
+  return subset.length ? subset : hosts
 }
 
 /** 本地日期 yyyy-mm-dd（用户就这一台电脑，按本机时区算最直观）。 */
@@ -333,9 +359,12 @@ async function tick(ctx) {
 
   if (auto.enabled && !inspecting && (retryDue || cadenceDue)) {
     inspecting = true
+    // 正常周期跑全量；只是重试到点就只补上次失败的那几台
+    const retryOnly = retryDue && !cadenceDue
+    const targets = pickHosts(state.hosts, { retryOnly })
     let results = []
     try {
-      results = await runInspection(state.hosts, thresholdsOf(state))
+      results = await runInspection(targets, thresholdsOf(state))
     } finally {
       inspecting = false
     }
@@ -345,7 +374,8 @@ async function tick(ctx) {
     await writeState({
       ...fresh,
       lastInspect,
-      history: withHistory(fresh, lastInspect, state.hosts.map((host) => host.id)),
+      // 走势只记「这一轮真的测了」的主机：补测那几台之外的老记录不能重复落点
+      history: withHistory(fresh, lastInspect, results.map((item) => item.hostId)),
       settings: { ...fresh.settings, lastAutoAt: now },
       attemptLog: [attempt, ...(fresh.attemptLog ?? [])].slice(0, ATTEMPT_LIMIT),
     })

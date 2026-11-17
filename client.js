@@ -1409,6 +1409,18 @@ window.__ModuleLoader__.load({
       return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
     }
 
+    // 绝对时间：今天的只给时分秒，隔天的带上月日。相对时间会「冻住」——
+    // 轮询只在巡检结果变了才重画，所以顶部以绝对时间为准，相对时间只作辅助。
+    function stampOf(ts) {
+      if (!ts) return ''
+      const date = new Date(ts)
+      const now = new Date()
+      const sameDay = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return sameDay ? clockSec(ts) : `${month}-${day} ${clockSec(ts)}`
+    }
+
     // 桌面端没有 F5（菜单里的「重新加载页面」只在开发版出现），所以自己给一个入口。
     // location.reload 会让页面重新走一遍引导，拿到最新的插件版本号。
     function reloadPage() {
@@ -1642,7 +1654,8 @@ window.__ModuleLoader__.load({
             }, '重载页面'),
           ),
           h('div', { className: 'ow-sub' },
-            h('span', null, `最近巡检 ${lastAt ? fmtAgo(lastAt) : '还没巡检过'}`),
+            h('span', { title: lastAt ? new Date(lastAt).toLocaleString() : '还没有任何一台巡检过' },
+              `上次巡检 ${lastAt ? `${stampOf(lastAt)}（${fmtAgo(lastAt)}）` : '还没巡检过'}`),
             h('span', null, autoText),
             h('span', null, dailyText),
             h('span', null, state.transport?.ssh2 ? `SSH ${state.transport.version ?? 'ssh2'}` : '未装 ssh2（密码登录不可用）'),

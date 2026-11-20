@@ -23,6 +23,7 @@ import { INSPECT_SCRIPT, evaluate, parseSnapshot } from './lib/probe.js'
 import { execScript, transportInfo } from './lib/ssh.js'
 import { DIAGNOSTICS, diagScript, diagnosticCatalog, findDiagnostic } from './lib/diag.js'
 import { buildReport } from './lib/report.js'
+import { firstHeading, markdownToHtml, parseDocument, safeFilename } from './lib/markdown.js'
 import {
   newHostId,
   normalizeHost,
@@ -66,6 +67,7 @@ export function apply(ctx) {
     ['/ops/api/report', 'POST', handleReport],
     ['/ops/api/reports', 'GET', handleReports],
     ['/ops/api/report/file', 'POST', handleReportFile],
+    ['/ops/api/report/export', 'POST', handleReportExport],
     ['/ops/api/settings', 'POST', handleSettings],
     ['/ops/api/log', 'POST', handleLog],
     ['/ops/api/handshake', 'GET', handleHandshake],
@@ -567,7 +569,8 @@ async function handleReport(res, body) {
   })
   const reportLog = [{ at: Date.now(), title: report.title, summary: report.summary }, ...state.reportLog].slice(0, 30)
   await writeState({ ...state, reportLog })
-  return sendJson(res, 200, report)
+  // blocks 是「预览」用的：页面不自己解析 Markdown，否则和导出会分叉。
+  return sendJson(res, 200, { ...report, blocks: parseDocument(report.markdown) })
 }
 
 /** 历史日报清单：读 reports 目录，按日期倒序。 */
@@ -594,10 +597,39 @@ async function handleReportFile(res, body) {
   const file = join(reportsDir(), `${date}.md`)
   try {
     const markdown = await readFile(file, 'utf8')
-    return sendJson(res, 200, { date, markdown, file })
+    const blocks = parseDocument(markdown)
+    return sendJson(res, 200, { date, markdown, file, title: firstHeading(blocks) || `${date} 的日报`, blocks })
   } catch {
     throw new Error(`没有 ${date} 的日报 —— 那天可能还没配好主机，或日报时间还没到`)
   }
+}
+
+/**
+ * 导出日报：md 原样给，html 用同一棵块树拼。
+ *
+ * 页面把 markdown 交回来，而不是宿主自己去读文件 —— 因为「刚生成、还没落盘」的
+ * 那份也要能导出。渲染留在宿主侧，保证导出的 HTML 和屏幕上看到的是同一套排版。
+ */
+async function handleReportExport(res, body) {
+  const format = String(body?.format ?? 'md')
+  if (format !== 'md' && format !== 'html') throw new Error('只支持导出 md 或 html')
+  const markdown = String(body?.markdown ?? '')
+  if (!markdown.trim()) throw new Error('没有可以导出的内容 —— 先点「生成今天的日报」')
+  const title = safeFilename(body?.title || firstHeading(parseDocument(markdown)) || '运维日报')
+  if (format === 'md') {
+    return sendJson(res, 200, {
+      format,
+      mime: 'text/markdown;charset=utf-8',
+      filename: `${title}.md`,
+      content: markdown.endsWith('\n') ? markdown : `${markdown}\n`,
+    })
+  }
+  return sendJson(res, 200, {
+    format,
+    mime: 'text/html;charset=utf-8',
+    filename: `${title}.html`,
+    content: markdownToHtml(markdown, { title, exportedAt: Date.now() }),
+  })
 }
 
 async function handleSettings(res, body) {

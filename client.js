@@ -109,6 +109,70 @@ window.__ModuleLoader__.load({
       .ow-pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11.5px; line-height:1.55;
         white-space:pre-wrap; word-break:break-word; margin:0; padding:11px 12px; border-radius:8px;
         background:var(--ow-fill); border:1px solid var(--ow-line-soft); max-height:46vh; overflow:auto; }
+      /* 日报预览：和导出 HTML 同一套排版（小标题色条 / 表头浅底 / 嵌套子项灰字竖线）。
+         改这里的字号、间距时，lib/markdown.js 里的 DOC_CSS 要一起改，否则导出的和屏幕上的会长得不一样。 */
+      .ow-report-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+      .ow-report-hint { flex:1 1 140px; min-width:110px; }
+      .ow-dates { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 14px; }
+      .ow-dates-label { font-size:11.5px; color:var(--ow-mute); margin-right:2px; white-space:nowrap; }
+      .ow-doc-wrap { max-width:900px; }
+      .ow-doc-head { display:flex; align-items:center; gap:8px; margin:0 0 8px; min-width:0; }
+      .ow-doc-head b { font-size:13.5px; font-weight:600; }
+      .ow-doc-path { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10.5px;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:48%; }
+      .ow-doc { border:1px solid var(--ow-line); border-radius:12px; background:var(--ow-fill);
+        padding:18px 22px 16px; font-size:13px; line-height:1.75; }
+      .ow-doc > :first-child { margin-top:0; }
+      .ow-doc > :last-child { margin-bottom:0; }
+      .ow-doc h1 { font-size:16px; font-weight:600; margin:0 0 12px; padding-bottom:9px; border-bottom:1px solid var(--ow-line); }
+      .ow-doc h2 { font-size:13.5px; font-weight:600; margin:22px 0 8px; padding-left:10px; position:relative; }
+      .ow-doc h2::before { content:''; position:absolute; left:0; top:.36em; width:3px; height:.92em;
+        border-radius:2px; background:#2f6feb; opacity:.85; }
+      .ow-doc h2[data-tone="crit"]::before { background:#d1453b; opacity:1; }
+      .ow-doc h2[data-tone="mute"]::before { background:var(--ow-mute); opacity:.55; }
+      .ow-doc h3 { font-size:12.5px; font-weight:600; margin:16px 0 6px; }
+      .ow-doc p { margin:8px 0; }
+      .ow-doc p.ow-doc-lead { font-size:13.2px; }
+      .ow-doc strong { font-weight:600; }
+      .ow-doc code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; padding:1px 5px;
+        border-radius:4px; background:var(--ow-fill-2); }
+      .ow-doc a { color:#2f6feb; text-decoration:none; }
+      .ow-doc a:hover { text-decoration:underline; }
+      .ow-doc ul, .ow-doc ol { margin:8px 0; padding-left:22px; }
+      .ow-doc li { margin:5px 0; }
+      .ow-doc li::marker { color:var(--ow-mute); }
+      .ow-doc li > ul, .ow-doc li > ol { margin:5px 0 8px; padding-left:16px; border-left:2px solid var(--ow-line-soft);
+        color:var(--ow-mute); font-size:12px; list-style:disc; }
+      .ow-doc blockquote { margin:16px 0 0; padding:9px 12px; border-left:3px solid var(--ow-line); border-radius:0 8px 8px 0;
+        background:var(--ow-fill-2); color:var(--ow-mute); font-size:11.5px; }
+      .ow-doc blockquote p { margin:0; }
+      .ow-doc hr { border:0; border-top:1px solid var(--ow-line); margin:16px 0; }
+      .ow-doc-table { margin:10px 0 6px; border:1px solid var(--ow-line-soft); border-radius:9px; overflow:auto; }
+      .ow-doc-table table { width:100%; border-collapse:collapse; font-size:12px; }
+      .ow-doc-table th { text-align:left; font-weight:600; font-size:11px; color:var(--ow-mute); padding:7px 10px;
+        border-bottom:1px solid var(--ow-line); background:var(--ow-fill-2); white-space:nowrap; }
+      .ow-doc-table td { padding:6px 10px; border-bottom:1px solid var(--ow-line-soft); vertical-align:middle; }
+      .ow-doc-table tbody tr:last-child td { border-bottom:none; }
+      .ow-doc-table tbody tr:hover td { background:var(--ow-fill); }
+      .ow-doc-table td:first-child { font-weight:500; }
+      .ow-doc pre { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; line-height:1.55;
+        white-space:pre-wrap; word-break:break-word; margin:10px 0; padding:10px 12px; border-radius:8px;
+        background:var(--ow-fill-2); overflow:auto; }
+      /* 导出下拉：面板宽度有限，菜单用 DSH 的浮层底色（拿不到就退回中性半透明） */
+      .ow-export { position:relative; margin-left:auto; }
+      .ow-export-btn { display:inline-flex; align-items:center; gap:6px; }
+      .ow-caret { font-size:9px; opacity:.72; line-height:1; }
+      .ow-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:30; min-width:248px; padding:5px;
+        border-radius:10px; border:1px solid var(--dsw-alias-border-l1, var(--ow-line));
+        background:var(--dsw-alias-bg-layer-1, var(--ow-fill-2)); box-shadow:0 14px 34px rgba(0,0,0,.22); }
+      .ow-menu-item { display:block; width:100%; text-align:left; appearance:none; border:0; background:none;
+        color:inherit; font:inherit; font-size:12.5px; padding:7px 9px; border-radius:7px; cursor:pointer; }
+      .ow-menu-item:hover { background:var(--dsw-alias-bg-layer-2, var(--ow-fill)); }
+      .ow-menu-item b { font-weight:600; }
+      .ow-menu-item .ow-note { display:block; margin-top:1px; }
+      .ow-menu-err { position:absolute; right:0; top:calc(100% + 6px); z-index:31; max-width:290px; font-size:11.5px;
+        color:#d1453b; background:rgba(209,69,59,.10); border:1px solid rgba(209,69,59,.35);
+        border-radius:8px; padding:6px 9px; }
       .ow-input, .ow-select, .ow-area { font:inherit; font-size:12.5px; color:inherit; background:var(--ow-fill);
         border:1px solid var(--ow-line); border-radius:7px; padding:5px 8px; width:100%; box-sizing:border-box; }
       .ow-input:focus, .ow-select:focus, .ow-area:focus { outline:2px solid rgba(47,111,235,.45); outline-offset:0; border-color:#2f6feb; }
@@ -419,6 +483,19 @@ window.__ModuleLoader__.load({
       document.execCommand('copy')
       document.body.removeChild(area)
       return Promise.resolve()
+    }
+
+    /** 把一段文本存成本地文件（浏览器里下载只有这一条路）。 */
+    function saveFile(filename, content, mime) {
+      const blob = new Blob([content], { type: mime })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
     }
 
     /* --------------------------------------------- 把问题带到对话框（处理） */
@@ -1331,82 +1408,251 @@ window.__ModuleLoader__.load({
 
     /* -------------------------------------------------------------- 日报 */
 
+    // 导出下拉：写清楚「拿去干什么」，比只写后缀有用
+    const EXPORT_TARGETS = [
+      { format: 'md', label: 'Markdown（.md）', hint: '原始文本，贴群里、进 Git 都方便' },
+      { format: 'html', label: '网页（.html）', hint: '单文件，双击就能看，也能打印成 PDF' },
+    ]
+
+    /** 行内节点 → React 子节点。纯文本直接给字符串，不额外套一层。 */
+    function inlineNodes(nodes, prefix = '') {
+      return (nodes ?? []).map((node, index) => {
+        const key = `${prefix}${index}`
+        if (node.type === 'strong') return h('strong', { key }, node.text)
+        if (node.type === 'code') return h('code', { key }, node.text)
+        if (node.type === 'link') {
+          return h('a', { key, href: node.href, target: '_blank', rel: 'noreferrer noopener' }, node.text)
+        }
+        return node.text
+      })
+    }
+
+    function DocTable({ block }) {
+      return h('div', { className: 'ow-doc-table' },
+        h('table', null,
+          h('thead', null,
+            h('tr', null,
+              block.head.map((cell, index) => h('th', { key: index }, inlineNodes(cell, `h${index}-`))),
+            ),
+          ),
+          h('tbody', null,
+            block.rows.map((row, rowIndex) => h('tr', { key: rowIndex },
+              row.map((cell, cellIndex) => h('td', { key: cellIndex }, inlineNodes(cell, `r${rowIndex}c${cellIndex}-`))),
+            )),
+          ),
+        ),
+      )
+    }
+
+    function DocList({ block }) {
+      const tag = block.ordered ? 'ol' : 'ul'
+      return h(tag, null, block.items.map((item, index) => h('li', { key: index },
+        inlineNodes(item.inline, `i${index}-`),
+        (item.children ?? []).map((child, childIndex) => h(DocList, { key: `c${childIndex}`, block: child })),
+      )))
+    }
+
+    function DocBlock({ block }) {
+      if (block.type === 'heading') {
+        return h(`h${block.level}`, block.tone ? { 'data-tone': block.tone } : null, inlineNodes(block.inline))
+      }
+      if (block.type === 'paragraph') {
+        return h('p', block.lead ? { className: 'ow-doc-lead' } : null, inlineNodes(block.inline))
+      }
+      if (block.type === 'quote') return h('blockquote', null, inlineNodes(block.inline))
+      if (block.type === 'list') return h(DocList, { block })
+      if (block.type === 'table') return h(DocTable, { block })
+      if (block.type === 'code') return h('pre', null, h('code', null, block.text))
+      if (block.type === 'rule') return h('hr')
+      return null
+    }
+
+    /** 导出按钮 + 下拉菜单（点外面或按 Esc 收起）。 */
+    function ExportButton({ doc }) {
+      const [open, setOpen] = useState(false)
+      const [busy, setBusy] = useState('')
+      const [error, setError] = useState('')
+      const box = useRef(null)
+
+      useEffect(() => {
+        if (!open) return undefined
+        const onDown = (event) => {
+          if (box.current && !box.current.contains(event.target)) setOpen(false)
+        }
+        const onKey = (event) => { if (event.key === 'Escape') setOpen(false) }
+        document.addEventListener('mousedown', onDown, true)
+        document.addEventListener('keydown', onKey)
+        return () => {
+          document.removeEventListener('mousedown', onDown, true)
+          document.removeEventListener('keydown', onKey)
+        }
+      }, [open])
+
+      const pick = (format) => {
+        setOpen(false)
+        if (!doc || busy) return
+        setBusy(format)
+        setError('')
+        // 渲染留在宿主侧：导出的 HTML 和屏幕上看到的是同一份排版
+        api('/ops/api/report/export', { format, markdown: doc.markdown, title: doc.title })
+          .then((data) => {
+            saveFile(data.filename, data.content, data.mime)
+            setBusy('')
+          })
+          .catch((problem) => {
+            setError(problem.message)
+            setBusy('')
+            reportError('report.export', problem, { format })
+          })
+      }
+
+      return h('div', { className: 'ow-export', ref: box },
+        h('button', {
+          type: 'button',
+          className: 'ow-btn ow-export-btn',
+          disabled: !doc || Boolean(busy),
+          'aria-haspopup': 'menu',
+          'aria-expanded': open ? 'true' : 'false',
+          onClick: () => setOpen((value) => !value),
+        },
+          h('span', null, busy ? '导出中…' : '导出'),
+          h('span', { className: 'ow-caret' }, '▾'),
+        ),
+        open
+          ? h('div', { className: 'ow-menu', role: 'menu' },
+            EXPORT_TARGETS.map((target) => h('button', {
+              key: target.format,
+              type: 'button',
+              role: 'menuitem',
+              className: 'ow-menu-item',
+              onClick: () => pick(target.format),
+            },
+              h('b', null, target.label),
+              h('span', { className: 'ow-note' }, target.hint),
+            )),
+          )
+          : null,
+        error ? h('div', { className: 'ow-menu-err' }, error) : null,
+      )
+    }
+
+    /** 一份日报的预览。blocks 由宿主给（和导出用的是同一棵），这里只负责画。 */
+    function DocView({ doc }) {
+      const blocks = doc.blocks ?? []
+      // 一级标题已经在卡片头上显示了，正文里不再重复一遍
+      const rest = blocks.length > 0 && blocks[0].type === 'heading' && blocks[0].level === 1
+        ? blocks.slice(1)
+        : blocks
+      return h('div', { className: 'ow-doc-wrap' },
+        h('div', { className: 'ow-doc-head' },
+          h('b', null, doc.title || '运维日报'),
+          doc.kind === 'live' ? h('span', { className: 'ow-pill' }, '本次生成') : null,
+          h('div', { className: 'ow-spacer' }),
+          doc.kind === 'file' && doc.file
+            ? h('span', { className: 'ow-note ow-doc-path', title: doc.file }, doc.file)
+            : null,
+        ),
+        rest.length > 0
+          ? h('div', { className: 'ow-doc' }, rest.map((block, index) => h(DocBlock, { key: index, block })))
+          : h('pre', { className: 'ow-pre' }, doc.markdown),
+      )
+    }
+
     function ReportView({ state, report, running, onRun }) {
       const hosts = state?.hosts ?? []
       const [stored, setStored] = useState({ items: [], dir: '' })
       const [opened, setOpened] = useState(null)
+      const [opening, setOpening] = useState('')
+      const [error, setError] = useState('')
+      const [copied, setCopied] = useState(false)
 
       const loadStored = useCallback(() => {
         api('/ops/api/reports')
           .then((data) => setStored(data))
-          .catch((error) => reportError('reports.list', error))
+          .catch((problem) => reportError('reports.list', problem))
       }, [])
 
       useEffect(() => { loadStored() }, [loadStored])
 
-      const openStored = (date) => {
+      const openStored = useCallback((date) => {
+        setOpening(date)
+        setError('')
         api('/ops/api/report/file', { date })
-          .then((data) => setOpened(data))
-          .catch((error) => setOpened({ date, markdown: `读不到 ${date} 的日报：${error.message}`, error: true }))
-      }
+          .then((data) => {
+            setOpened(data)
+            setOpening('')
+          })
+          .catch((problem) => {
+            setOpening('')
+            setError(`读不到 ${date} 的日报：${problem.message}`)
+            reportError('reports.open', problem, { date })
+          })
+      }, [])
 
-      const download = () => {
-        if (!report) return
-        const blob = new Blob([report.markdown], { type: 'text/markdown;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = `${report.title}.md`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
+      // 新生成的那份优先：把历史那份放掉，不然点过日期后会一直停在旧日报上
+      useEffect(() => {
+        if (report) setOpened(null)
+      }, [report])
+
+      // 一进页面先自动打开最新一份，省得还得先点一下日期才看得到东西
+      const autoOpened = useRef(false)
+      useEffect(() => {
+        if (autoOpened.current || report || stored.items.length === 0) return
+        autoOpened.current = true
+        openStored(stored.items[0].date)
+      }, [stored, report, openStored])
+
+      const doc = useMemo(() => {
+        if (opened) return { ...opened, kind: 'file' }
+        if (report) {
+          return { kind: 'live', title: report.title, markdown: report.markdown, blocks: report.blocks ?? [] }
+        }
+        return null
+      }, [opened, report])
+
+      const copyDoc = () => {
+        if (!doc) return
+        copyText(doc.markdown)
+          .then(() => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1600)
+          })
+          .catch((problem) => reportError('report.copy', problem))
       }
 
       return h('div', null,
-        h('div', { className: 'ow-row', style: { marginBottom: 12 } },
-          h(Btn, { kind: 'primary', onClick: onRun, disabled: running || hosts.length === 0 }, running ? '生成中…' : '生成今天的日报'),
-          report ? h(Btn, { tiny: true, kind: 'ghost', onClick: () => copyText(report.markdown) }, '复制全文') : null,
-          report ? h(Btn, { tiny: true, kind: 'ghost', onClick: download }, '下载 .md') : null,
-          h('span', { className: 'ow-note' }, '日报只用最后一次巡检的数据；想更准就先巡检一次'),
+        h('div', { className: 'ow-report-bar' },
+          h(Btn, { kind: 'primary', onClick: onRun, disabled: running || hosts.length === 0 },
+            running ? '生成中…' : '生成今天的日报'),
+          doc ? h(Btn, { tiny: true, kind: 'ghost', onClick: copyDoc }, copied ? '已复制' : '复制全文') : null,
+          h('span', { className: 'ow-note ow-report-hint' }, '日报只用最后一次巡检的数据；想更准就先巡检一次'),
+          h(ExportButton, { doc }),
         ),
-        report
-          ? h('div', null,
-            h('div', { className: 'ow-banner' }, h('div', null, h('b', null, report.title), h('div', { className: 'ow-note' }, report.summary))),
-            h('pre', { className: 'ow-pre', style: { maxHeight: '56vh' } }, report.markdown),
-          )
+
+        h('div', { className: 'ow-dates' },
+          h('span', { className: 'ow-dates-label' }, '历史日报'),
+          stored.items.length === 0
+            ? h('span', { className: 'ow-note' },
+              '还没有自动生成的日报 —— 到「巡检 → 定时任务」里设的时间会自动生成，也可以点上面「生成今天的日报」立刻出一份。')
+            : stored.items.slice(0, 14).map((item) => h(Btn, {
+              key: item.date,
+              tiny: true,
+              kind: opened?.date === item.date ? 'primary' : 'ghost',
+              disabled: opening === item.date,
+              onClick: () => openStored(item.date),
+            }, item.date)),
+        ),
+
+        error ? h('div', { className: 'ow-banner', style: { color: '#d1453b' } }, error) : null,
+
+        doc
+          ? h(DocView, { doc })
           : h('div', { className: 'ow-empty' },
             h('b', null, '日报长什么样？'),
-            h('div', null, '一句话结论 + 一张总览表 + 需要处理的问题（带怎么处理）+ 明天先做三件事。'),
-            h('div', { className: 'ow-note', style: { marginTop: 8 } }, '适合直接贴到群里，或者存下来当交接记录。'),
+            h('div', null, '一句话结论 + 一张总览表 + 需要处理的问题（含怎么处理）+ 明天先做三件事。'),
+            h('div', { className: 'ow-note', style: { marginTop: 8 } },
+              '适合直接贴到群里，也能导出成 .md / .html 存下来当交接记录。'),
           ),
-
-        h('div', { style: { marginTop: 18 } },
-          h('div', { className: 'ow-h2' }, '历史日报'),
-          stored.items.length === 0
-            ? h('div', { className: 'ow-note' },
-              '还没有自动生成的日报 —— 到「巡检 → 定时任务」里设的那个时间会自动生成，也可以点上面「生成今天的日报」立刻出一份。')
-            : h('div', null,
-              h('div', { className: 'ow-row', style: { flexWrap: 'wrap', gap: 6 } },
-                stored.items.slice(0, 14).map((item) => h(Btn, {
-                  key: item.date,
-                  tiny: true,
-                  kind: opened?.date === item.date ? 'primary' : 'ghost',
-                  onClick: () => openStored(item.date),
-                }, item.date)),
-              ),
-              opened
-                ? h('div', { style: { marginTop: 10 } },
-                  h('div', { className: 'ow-row' },
-                    h('b', null, `${opened.date} 的日报`),
-                    h('div', { className: 'ow-spacer' }),
-                    h(Btn, { tiny: true, kind: 'ghost', onClick: () => copyText(opened.markdown) }, '复制全文'),
-                  ),
-                  h('pre', { className: 'ow-pre', style: { maxHeight: '48vh' } }, opened.markdown),
-                )
-                : h('div', { className: 'ow-note', style: { marginTop: 8 } }, `点日期看当天原文 · 文件在 ${stored.dir || '本机 reports 目录'}`),
-            ),
-        ),
       )
     }
 
@@ -1898,6 +2144,8 @@ window.__ModuleLoader__.load({
             smoothPath, trendPoints, trendDomain, hoverIndexAt, xTickIndexes, TrendChart,
             // 相对时间 + 那只共享时钟：验证「数据没变，文案也会自己走」
             fmtAgo, fmtIn, stampOf, retryHint, Ago, In, RetryHint, InspectedAt,
+            // 日报预览：验证「页面上画的」和「导出文件里的」是同一份
+            DocView, DocBlock, ReportView, EXPORT_TARGETS,
             clock: {
               ms: CLOCK_MS,
               now: () => clockNow,

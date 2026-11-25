@@ -1962,7 +1962,10 @@ window.__ModuleLoader__.load({
       }
 
       const lastAt = Object.values(state.lastInspect ?? {}).map((record) => record.at).filter(Boolean).sort((a, b) => b - a)[0]
-      const critCount = Object.values(state.lastInspect ?? {}).filter((record) => record.level === 'crit').length
+      const critCount = (state?.hosts ?? []).filter((host) => {
+        const record = state.lastInspect?.[host.id]
+        return record && record.level === 'crit'
+      }).length
       const sched = state.scheduler ?? {}
       const auto = sched.auto ?? { enabled: false, everyMinutes: 15 }
       const daily = sched.daily ?? { enabled: false, hour: 9, minute: 0 }
